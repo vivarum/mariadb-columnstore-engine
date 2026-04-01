@@ -83,6 +83,9 @@ static MYSQL_THDVAR_ENUM(select_handler, PLUGIN_VAR_RQCMDARG,
 static MYSQL_THDVAR_BOOL(derived_handler, PLUGIN_VAR_NOCMDARG, "Enable/Disable the MCS derived_handler", NULL,
                          NULL, 1);
 
+static MYSQL_THDVAR_BOOL(debug_logging, PLUGIN_VAR_NOCMDARG, "Enable/Disable debug logging", NULL,
+                         NULL, 0);
+
 static MYSQL_THDVAR_BOOL(select_handler_in_stored_procedures, PLUGIN_VAR_NOCMDARG,
                          "Enable/Disable the MCS select_handler for Stored Procedures", NULL, NULL, 1);
 
@@ -243,6 +246,7 @@ st_mysql_sys_var* mcs_system_variables[] = {MYSQL_SYSVAR(compression_type),
                                             MYSQL_SYSVAR(original_option_bits),
                                             MYSQL_SYSVAR(select_handler),
                                             MYSQL_SYSVAR(derived_handler),
+                                            MYSQL_SYSVAR(debug_logging),
                                             MYSQL_SYSVAR(select_handler_in_stored_procedures),
                                             MYSQL_SYSVAR(orderby_threads),
                                             MYSQL_SYSVAR(query_accel_parallel_factor),
@@ -348,6 +352,15 @@ bool get_derived_handler(THD* thd)
 void set_derived_handler(THD* thd, bool value)
 {
   THDVAR(thd, derived_handler) = value;
+}
+
+bool get_debug_logging(THD* thd)
+{
+  return (thd == NULL) ? false : THDVAR(thd, debug_logging);
+}
+void set_debug_loggign(THD* thd, bool value)
+{
+  THDVAR(thd, debug_logging) = value;
 }
 
 bool get_select_handler_in_stored_procedures(THD* thd)

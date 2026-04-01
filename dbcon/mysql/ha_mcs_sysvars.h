@@ -75,6 +75,9 @@ void set_select_handler_mode(THD* thd, ulong value);
 bool get_derived_handler(THD* thd);
 void set_derived_handler(THD* thd, bool value);
 
+bool get_debug_logging(THD* thd);
+void set_debug_loggign(THD* thd, bool value);
+
 bool get_select_handler_in_stored_procedures(THD* thd);
 void set_select_handler_in_stored_procedures(THD* thd, bool value);
 
