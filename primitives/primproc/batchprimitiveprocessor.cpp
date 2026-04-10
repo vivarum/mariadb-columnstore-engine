@@ -1381,6 +1381,27 @@ uint32_t BatchPrimitiveProcessor::executeTupleJoin(uint32_t startRid, RowGroup& 
   return newStartRid;
 }
 
+// Debug helpers: call from lldb with `p dumpRG(&outputRG)` or `p dumpRow(&outputRG, 0)`
+__attribute__((used)) std::string dumpRG(rowgroup::RowGroup* rg)
+{
+  rowgroup::Row r;
+  rg->initRow(&r);
+  rg->getRow(0, &r);
+  std::string result;
+  for (uint32_t i = 0; i < rg->getRowCount(); i++, r.nextRow())
+    result += "Row " + std::to_string(i) + ": " + r.toString() + "\n";
+  result += "(" + std::to_string(rg->getRowCount()) + " rows, " + std::to_string(rg->getColumnCount()) + " cols)";
+  return result;
+}
+
+__attribute__((used)) std::string dumpRow(rowgroup::RowGroup* rg, uint32_t rowNum)
+{
+  rowgroup::Row r;
+  rg->initRow(&r);
+  rg->getRow(rowNum, &r);
+  return r.toString();
+}
+
 #ifdef PRIMPROC_STOPWATCH
 void BatchPrimitiveProcessor::execute(StopWatch* stopwatch, messageqcpp::SBS& bs)
 #else
