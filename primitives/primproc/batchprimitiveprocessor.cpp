@@ -1642,6 +1642,36 @@ void BatchPrimitiveProcessor::execute(messageqcpp::SBS& bs)
 #endif
           }
         }
+
+        // Experimental: append " [MCS]" to all string column values after projection
+        // Skip internal/system catalog queries (high bit set in sessionID)
+        // if (!(sessionID & 0x80000000))
+        // {
+        //   rowgroup::Row outRow;
+        //   outputRG.initRow(&outRow);
+        //   outputRG.getRow(0, &outRow);
+        //   for (uint32_t r = 0; r < outputRG.getRowCount(); r++, outRow.nextRow())
+        //   {
+        //     for (uint32_t col = 0; col < outRow.getColumnCount(); col++)
+        //     {
+        //       if (outRow.isCharType(col) && !outRow.isNullValue(col))
+        //       {
+        //         const std::string suffix = "~[MCS]";
+        //         const CHARSET_INFO* cs = outRow.getCharset(col);
+        //         const uint32_t maxChars = (outRow.getColumnWidth(col)-1) / cs->mbmaxlen;
+        //         utils::ConstString val = outRow.getConstString(col);
+        //         uint32_t remaining = (val.length() < maxChars) ? maxChars - val.length() : 0;
+        //         if (remaining > 0)
+        //         {
+        //           std::string modified(val.str(), val.length());
+        //           modified += suffix.substr(0, remaining);
+        //           outRow.setStringField((const uint8_t*)modified.c_str(), modified.length(), col);
+        //         }
+        //       }
+        //     }
+        //   }
+        // }
+
         if (fe2)
         {
           utils::setThreadName("BPPFE2_1");

@@ -118,3 +118,28 @@ SELECT * FROM large_table;  -- Should stop after 100 rows
 **Files to modify**:
 - `/storage/columnstore/columnstore/dbcon/mysql/ha_mcs_sysvars.cpp`
 - `/storage/columnstore/columnstore/dbcon/mysql/ha_mcs_impl.cpp`
+
+---
+
+## Challenge 5: Intercept and Modify Query Results
+
+**Goal**: Modify query results dynamically in columnstore
+
+**Task**: Append " [MCS]" to string/varchar column values when debug logging is enabled.
+
+**Specific Changes**:
+1. For string types (VARCHAR, CHAR, TEXT), append " [MCS]" suffix
+2. Handle NULL values (don't modify) and field length constraints
+
+**Test**:
+```sql
+CREATE TABLE cs_lab.t3 (id INT, name VARCHAR(50)) ENGINE=Columnstore;
+INSERT INTO t3 VALUES (1, 'Alice'), (2, 'Bob');
+SET columnstore_debug_logging = ON;
+SELECT * FROM t3;
+-- Should return: 1, "Alice [MCS]" and 2, "Bob [MCS]"
+SET columnstore_debug_logging = OFF;
+SELECT * FROM t3;
+-- Should return original: 1, "Alice" and 2, "Bob"
+```
+**Expected Result**: String columns have " [MCS]" appended before any other expression is applied to the column.
