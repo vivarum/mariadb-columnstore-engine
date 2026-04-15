@@ -24,6 +24,7 @@
 #include "rbo_apply_parallel_ces.h"
 #include "rbo_apply_rewrite_distinct.h"
 #include "rbo_groupby_wrap_columns.h"
+#include "rbo_or_to_in.h"
 #include "rbo_predicate_pushdown.h"
 #include "utils/pron/pron.h"
 
@@ -98,6 +99,9 @@ bool optimizeCSEP(execplan::CalpontSelectExecutionPlan& root, optimizer::RBOptim
   optimizer::Rule predicatePushdown{"predicate_pushdown", optimizer::predicatePushdownFilter,
                                     optimizer::applyPredicatePushdown};
   rules.push_back(predicatePushdown);
+  // DISABLE FOR NOW, JUST IN CASE
+  // optimizer::Rule orToIn{"or_to_in", optimizer::orToInFilter, optimizer::applyOrToIn};
+  // rules.push_back(orToIn);
 
   return optimizeCSEPWithRules(root, rules, ctx);
 }

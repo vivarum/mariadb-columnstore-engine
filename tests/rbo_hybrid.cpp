@@ -10,9 +10,15 @@
 #include <string>
 
 #include <dbcon/rbo/rbo_apply_parallel_ces.h>
+#include <dbcon/rbo/rbo_or_to_in.h>
 
 #include <dbcon/execplan/calpontselectexecutionplan.h>
 #include <dbcon/execplan/simplecolumn.h>
+#include <dbcon/execplan/constantcolumn.h>
+#include <dbcon/execplan/constantfilter.h>
+#include <dbcon/execplan/predicateoperator.h>
+#include <dbcon/execplan/logicoperator.h>
+#include <dbcon/execplan/parsetree.h>
 #include <dbcon/mysql/ha_mcs_impl_if.h>
 
 class RBOHybridTest : public ::testing::Test
@@ -530,4 +536,294 @@ TEST_F(RBOHybridTest, ApplyParallelCESScenarios)
   EXPECT_FALSE(retrievedTables[0].fisColumnStore);  // foreign_table1
   EXPECT_FALSE(retrievedTables[1].fisColumnStore);  // foreign_table2
   EXPECT_TRUE(retrievedTables[2].fisColumnStore);   // cs_table
+}
+
+// ============================================================================
+// or_to_in RBO rule tests
+// ============================================================================
+
+class OrToInTest : public RBOHybridTest
+{
+ protected:
+  execplan::SimpleColumn* newMockCol(const std::string& schema, const std::string& table,
+                                     const std::string& column, const std::string& alias = "")
+  {
+    auto* sc = new MockSimpleColumn(schema, table, column);
+    sc->tableAlias(alias.empty() ? table : alias);
+    return sc;
+  }
+
+  // Helper: create a SimpleFilter representing col = 'value'
+  execplan::SimpleFilter* newEqFilter(const std::string& schema, const std::string& table,
+                                      const std::string& column, const std::string& value,
+                                      const std::string& alias = "")
+  {
+    return new execplan::SimpleFilter(execplan::SOP(new execplan::PredicateOperator("=")),
+                                      newMockCol(schema, table, column, alias),
+                                      new execplan::ConstantColumn(value));
+  }
+
+  // Helper: create a SimpleFilter representing col > value (non-equality)
+  execplan::SimpleFilter* newGtFilter(const std::string& schema, const std::string& table,
+                                      const std::string& column, const std::string& value,
+                                      const std::string& alias = "")
+  {
+    return new execplan::SimpleFilter(execplan::SOP(new execplan::PredicateOperator(">")),
+                                      newMockCol(schema, table, column, alias),
+                                      new execplan::ConstantColumn(value));
+  }
+
+  // Helper: build OR(left, right) ParseTree node
+  execplan::ParseTree* newOrNode(execplan::ParseTree* left, execplan::ParseTree* right)
+  {
+    return new execplan::ParseTree(new execplan::LogicOperator("or"), left, right);
+  }
+
+  // Helper: build AND(left, right) ParseTree node
+  execplan::ParseTree* newAndNode(execplan::ParseTree* left, execplan::ParseTree* right)
+  {
+    return new execplan::ParseTree(new execplan::LogicOperator("and"), left, right);
+  }
+
+  // applyOrToIn completely ignores the RBOptimizerContext parameter, so we
+  // provide a zeroed-memory stand-in.  Constructing a real gp_walk_info would
+  // pull in server symbols (end_of_list, gp_walk_info dtor) that the test
+  // target doesn't link against.
+  struct DummyContext
+  {
+    alignas(optimizer::RBOptimizerContext) char buf[sizeof(optimizer::RBOptimizerContext)];
+    optimizer::RBOptimizerContext& ref()
+    {
+      return *reinterpret_cast<optimizer::RBOptimizerContext*>(buf);
+    }
+    DummyContext()
+    {
+      memset(buf, 0, sizeof(buf));
+    }
+  };
+
+  DummyContext dummyCtx;
+};
+
+// Test 1: Simple two-value OR → ConstantFilter with 2 entries
+TEST_F(OrToInTest, SimpleTwoValueOR)
+{
+  execplan::CalpontSelectExecutionPlan csep;
+  auto* tree = newOrNode(new execplan::ParseTree(newEqFilter("s", "t", "status", "shipped")),
+                         new execplan::ParseTree(newEqFilter("s", "t", "status", "pending")));
+  csep.filters(tree);
+
+  bool applied = optimizer::applyOrToIn(csep, dummyCtx.ref());
+  EXPECT_TRUE(applied);
+
+  auto* cf = dynamic_cast<execplan::ConstantFilter*>(csep.filters()->data());
+  ASSERT_NE(nullptr, cf);
+  EXPECT_EQ(2u, cf->filterList().size());
+  EXPECT_EQ(execplan::OP_OR, cf->op()->op());
+
+  // Verify it's now a leaf (no children)
+  EXPECT_EQ(nullptr, csep.filters()->left());
+  EXPECT_EQ(nullptr, csep.filters()->right());
+
+  // Verify the column
+  auto* col = dynamic_cast<execplan::SimpleColumn*>(cf->col().get());
+  ASSERT_NE(nullptr, col);
+  EXPECT_EQ("status", col->columnName());
+}
+
+// Test 2: Three-value OR chain (left-leaning tree) → ConstantFilter with 3 entries
+TEST_F(OrToInTest, ThreeValueORChain)
+{
+  // Parser builds left-leaning: OR( OR(a=1, a=2), a=3 )
+  auto* innerOr = newOrNode(new execplan::ParseTree(newEqFilter("s", "t", "status", "a")),
+                            new execplan::ParseTree(newEqFilter("s", "t", "status", "b")));
+  auto* tree = newOrNode(innerOr, new execplan::ParseTree(newEqFilter("s", "t", "status", "c")));
+  execplan::CalpontSelectExecutionPlan csep;
+  csep.filters(tree);
+
+  bool applied = optimizer::applyOrToIn(csep, dummyCtx.ref());
+  EXPECT_TRUE(applied);
+
+  auto* cf = dynamic_cast<execplan::ConstantFilter*>(csep.filters()->data());
+  ASSERT_NE(nullptr, cf);
+  EXPECT_EQ(3u, cf->filterList().size());
+  EXPECT_EQ(nullptr, csep.filters()->left());
+  EXPECT_EQ(nullptr, csep.filters()->right());
+}
+
+// Test 3: Different columns → no rewrite
+TEST_F(OrToInTest, DifferentColumnsNoRewrite)
+{
+  auto* tree = newOrNode(new execplan::ParseTree(newEqFilter("s", "t", "status", "shipped")),
+                         new execplan::ParseTree(newEqFilter("s", "t", "id", "1")));
+  execplan::CalpontSelectExecutionPlan csep;
+  csep.filters(tree);
+
+  bool applied = optimizer::applyOrToIn(csep, dummyCtx.ref());
+  EXPECT_FALSE(applied);
+
+  // Tree should be unchanged — root is still a LogicOperator
+  auto* logicOp = dynamic_cast<execplan::LogicOperator*>(csep.filters()->data());
+  ASSERT_NE(nullptr, logicOp);
+  EXPECT_EQ(execplan::OP_OR, logicOp->op());
+  EXPECT_NE(nullptr, csep.filters()->left());
+  EXPECT_NE(nullptr, csep.filters()->right());
+}
+
+// Test 4: Non-equality operator → no rewrite
+TEST_F(OrToInTest, NonEqualityOperatorNoRewrite)
+{
+  auto* tree = newOrNode(new execplan::ParseTree(newGtFilter("s", "t", "amount", "10")),
+                         new execplan::ParseTree(newGtFilter("s", "t", "amount", "5")));
+  execplan::CalpontSelectExecutionPlan csep;
+  csep.filters(tree);
+
+  bool applied = optimizer::applyOrToIn(csep, dummyCtx.ref());
+  EXPECT_FALSE(applied);
+
+  auto* logicOp = dynamic_cast<execplan::LogicOperator*>(csep.filters()->data());
+  ASSERT_NE(nullptr, logicOp);
+}
+
+// Test 5: OR nested inside AND — only OR subtree is rewritten
+TEST_F(OrToInTest, ORNestedInsideAND)
+{
+  // AND( OR(status='a', status='b'), amount > 10 )
+  auto* orSubtree = newOrNode(new execplan::ParseTree(newEqFilter("s", "t", "status", "a")),
+                              new execplan::ParseTree(newEqFilter("s", "t", "status", "b")));
+  auto* tree = newAndNode(orSubtree, new execplan::ParseTree(newGtFilter("s", "t", "amount", "10")));
+  execplan::CalpontSelectExecutionPlan csep;
+  csep.filters(tree);
+
+  bool applied = optimizer::applyOrToIn(csep, dummyCtx.ref());
+  EXPECT_TRUE(applied);
+
+  // Root should still be AND
+  auto* rootOp = dynamic_cast<execplan::LogicOperator*>(csep.filters()->data());
+  ASSERT_NE(nullptr, rootOp);
+  EXPECT_EQ(execplan::OP_AND, rootOp->op());
+
+  // Left child should now be a ConstantFilter
+  ASSERT_NE(nullptr, csep.filters()->left());
+  auto* cf = dynamic_cast<execplan::ConstantFilter*>(csep.filters()->left()->data());
+  ASSERT_NE(nullptr, cf);
+  EXPECT_EQ(2u, cf->filterList().size());
+
+  // Right child should still be a SimpleFilter (amount > 10)
+  ASSERT_NE(nullptr, csep.filters()->right());
+  auto* sf = dynamic_cast<execplan::SimpleFilter*>(csep.filters()->right()->data());
+  ASSERT_NE(nullptr, sf);
+}
+
+// Test 6: Null filter tree → returns false
+TEST_F(OrToInTest, NullFilterTree)
+{
+  execplan::CalpontSelectExecutionPlan csep;
+  // filters() is nullptr by default
+
+  bool applied = optimizer::applyOrToIn(csep, dummyCtx.ref());
+  EXPECT_FALSE(applied);
+}
+
+// Test 7: Single SimpleFilter leaf (no OR) → no rewrite
+TEST_F(OrToInTest, SingleSimpleFilterNoRewrite)
+{
+  execplan::CalpontSelectExecutionPlan csep;
+  csep.filters(new execplan::ParseTree(newEqFilter("s", "t", "status", "shipped")));
+
+  bool applied = optimizer::applyOrToIn(csep, dummyCtx.ref());
+  EXPECT_FALSE(applied);
+
+  // Should still be a SimpleFilter
+  auto* sf = dynamic_cast<execplan::SimpleFilter*>(csep.filters()->data());
+  ASSERT_NE(nullptr, sf);
+}
+
+// Test 8: Constant on the left side (reversed operands) → still rewritten
+TEST_F(OrToInTest, ConstantOnLeftSide)
+{
+  // Build: OR( 'shipped'=status, 'pending'=status )
+  auto* leftSF = new execplan::SimpleFilter(execplan::SOP(new execplan::PredicateOperator("=")),
+                                            new execplan::ConstantColumn("shipped"),
+                                            newMockCol("s", "t", "status"));
+  auto* rightSF = new execplan::SimpleFilter(execplan::SOP(new execplan::PredicateOperator("=")),
+                                             new execplan::ConstantColumn("pending"),
+                                             newMockCol("s", "t", "status"));
+  auto* tree = newOrNode(new execplan::ParseTree(leftSF), new execplan::ParseTree(rightSF));
+  execplan::CalpontSelectExecutionPlan csep;
+  csep.filters(tree);
+
+  bool applied = optimizer::applyOrToIn(csep, dummyCtx.ref());
+  EXPECT_TRUE(applied);
+
+  auto* cf = dynamic_cast<execplan::ConstantFilter*>(csep.filters()->data());
+  ASSERT_NE(nullptr, cf);
+  EXPECT_EQ(2u, cf->filterList().size());
+}
+
+// Test: orToInFilter returns true when filters exist, false otherwise
+TEST_F(OrToInTest, FilterCheckFunction)
+{
+  execplan::CalpontSelectExecutionPlan csepNoFilters;
+  EXPECT_FALSE(optimizer::orToInFilter(csepNoFilters, dummyCtx.ref()));
+
+  execplan::CalpontSelectExecutionPlan csepWithFilters;
+  csepWithFilters.filters(new execplan::ParseTree(newEqFilter("s", "t", "status", "shipped")));
+  EXPECT_TRUE(optimizer::orToInFilter(csepWithFilters, dummyCtx.ref()));
+}
+
+// Test: AND of two ORs on different columns — both rewritten independently
+TEST_F(OrToInTest, ANDOfTwoORsDifferentColumns)
+{
+  // AND( OR(status='a', status='b'), OR(id=1, id=2) )
+  auto* orLeft = newOrNode(new execplan::ParseTree(newEqFilter("s", "t", "status", "a")),
+                           new execplan::ParseTree(newEqFilter("s", "t", "status", "b")));
+  auto* orRight = newOrNode(new execplan::ParseTree(newEqFilter("s", "t", "id", "1")),
+                            new execplan::ParseTree(newEqFilter("s", "t", "id", "2")));
+  auto* tree = newAndNode(orLeft, orRight);
+  execplan::CalpontSelectExecutionPlan csep;
+  csep.filters(tree);
+
+  bool applied = optimizer::applyOrToIn(csep, dummyCtx.ref());
+  EXPECT_TRUE(applied);
+
+  // Root is still AND
+  auto* rootOp = dynamic_cast<execplan::LogicOperator*>(csep.filters()->data());
+  ASSERT_NE(nullptr, rootOp);
+  EXPECT_EQ(execplan::OP_AND, rootOp->op());
+
+  // Left child: ConstantFilter on status
+  auto* cfLeft = dynamic_cast<execplan::ConstantFilter*>(csep.filters()->left()->data());
+  ASSERT_NE(nullptr, cfLeft);
+  EXPECT_EQ(2u, cfLeft->filterList().size());
+  auto* colLeft = dynamic_cast<execplan::SimpleColumn*>(cfLeft->col().get());
+  ASSERT_NE(nullptr, colLeft);
+  EXPECT_EQ("status", colLeft->columnName());
+
+  // Right child: ConstantFilter on id
+  auto* cfRight = dynamic_cast<execplan::ConstantFilter*>(csep.filters()->right()->data());
+  ASSERT_NE(nullptr, cfRight);
+  EXPECT_EQ(2u, cfRight->filterList().size());
+  auto* colRight = dynamic_cast<execplan::SimpleColumn*>(cfRight->col().get());
+  ASSERT_NE(nullptr, colRight);
+  EXPECT_EQ("id", colRight->columnName());
+}
+
+// Test: Four-value OR chain → ConstantFilter with 4 entries
+TEST_F(OrToInTest, FourValueORChain)
+{
+  // Left-leaning: OR( OR( OR(a, b), c), d)
+  auto* or1 = newOrNode(new execplan::ParseTree(newEqFilter("s", "t", "status", "a")),
+                        new execplan::ParseTree(newEqFilter("s", "t", "status", "b")));
+  auto* or2 = newOrNode(or1, new execplan::ParseTree(newEqFilter("s", "t", "status", "c")));
+  auto* or3 = newOrNode(or2, new execplan::ParseTree(newEqFilter("s", "t", "status", "d")));
+  execplan::CalpontSelectExecutionPlan csep;
+  csep.filters(or3);
+
+  bool applied = optimizer::applyOrToIn(csep, dummyCtx.ref());
+  EXPECT_TRUE(applied);
+
+  auto* cf = dynamic_cast<execplan::ConstantFilter*>(csep.filters()->data());
+  ASSERT_NE(nullptr, cf);
+  EXPECT_EQ(4u, cf->filterList().size());
 }

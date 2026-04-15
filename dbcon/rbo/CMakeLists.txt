@@ -3,7 +3,8 @@ set(rbo_SRCS
     rbo_apply_parallel_ces.cpp
     rbo_apply_rewrite_distinct.cpp
     rbo_predicate_pushdown.cpp
-    rbo_groupby_wrap_columns.cpp)
+    rbo_groupby_wrap_columns.cpp
+    rbo_or_to_in.cpp)
 
 columnstore_library(rbo ${rbo_SRCS})
 
