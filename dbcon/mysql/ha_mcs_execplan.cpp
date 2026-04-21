@@ -2923,6 +2923,12 @@ ReturnedColumn* buildReturnedColumnBody(Item* item, gp_walk_info& gwi, bool& non
 
     case Item::SUBSELECT_ITEM:
     {
+      if (item->const_item())
+      {
+          rc = buildConstantColumnMaybeNullUsingValStr(item, gwi);
+          break;
+      }
+
       gwi.hasSubSelect = true;
       break;
     }
