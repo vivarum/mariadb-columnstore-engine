@@ -699,7 +699,7 @@ class PackageHandler
       if ((result.result != DDLPackageProcessor::NO_ERROR) &&
           (result.result != DDLPackageProcessor::USER_ERROR))
       {
-        logging::LoggingID lid(23);
+        logging::LoggingID lid(23, fSessionID, fTxnid.id);
         logging::MessageLog ml(lid);
 
         ml.logErrorMessage(result.message);

@@ -1148,14 +1148,14 @@ void PackageHandler::run()
         (result.result != dmlpackageprocessor::DMLPackageProcessor::ACTIVE_TRANSACTION_ERROR) &&
         (result.result != dmlpackageprocessor::DMLPackageProcessor::VB_OVERFLOW_ERROR))
     {
-      logging::LoggingID lid(21);
+      logging::LoggingID lid(21, fSessionID, fTxnid);
       logging::MessageLog ml(lid);
 
       ml.logErrorMessage(result.message);
     }
     else if (result.result == dmlpackageprocessor::DMLPackageProcessor::IDBRANGE_WARNING)
     {
-      logging::LoggingID lid(21);
+      logging::LoggingID lid(21, fSessionID, fTxnid);
       logging::MessageLog ml(lid);
 
       ml.logWarningMessage(result.message);
@@ -1165,7 +1165,7 @@ void PackageHandler::run()
   {
     cout << "dmlprocessor.cpp PackageHandler::run() package type(" << fPackageType
          << ") exception: " << e.what() << endl;
-    logging::LoggingID lid(21);
+    logging::LoggingID lid(21, fSessionID, fTxnid);
     logging::MessageLog ml(lid);
     logging::Message::Args args;
     logging::Message message(1);
@@ -1181,7 +1181,7 @@ void PackageHandler::run()
   }
   catch (...)
   {
-    logging::LoggingID lid(21);
+    logging::LoggingID lid(21, fSessionID, fTxnid);
     logging::MessageLog ml(lid);
     logging::Message::Args args;
     logging::Message message(1);
@@ -1585,7 +1585,7 @@ void DMLProcessor::operator()()
             logging::Message message(2);
             args.add(oss.str());
             message.format(args);
-            logging::LoggingID lid(20);
+            logging::LoggingID lid(20, sessionID);
             logging::MessageLog ml(lid);
             ml.logErrorMessage(message);
             results << message.msg();
