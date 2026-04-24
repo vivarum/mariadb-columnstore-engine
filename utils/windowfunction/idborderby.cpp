@@ -633,6 +633,8 @@ void CompareRule::compileRules(const std::vector<IdbSortSpec>& spec, const rowgr
       case CalpontSystemCatalog::CHAR:
       case CalpontSystemCatalog::VARCHAR:
       case CalpontSystemCatalog::TEXT:
+      case CalpontSystemCatalog::BLOB:
+      case CalpontSystemCatalog::VARBINARY:
       {
         Compare* c = new StringCompare(spec_el);
         fCompares.push_back(c);
@@ -845,6 +847,9 @@ bool EqualCompData::operator()(Row::Pointer a, Row::Pointer b)
 
       case CalpontSystemCatalog::CHAR:
       case CalpontSystemCatalog::VARCHAR:
+      case CalpontSystemCatalog::TEXT:
+      case CalpontSystemCatalog::BLOB:
+      case CalpontSystemCatalog::VARBINARY:
       {
         eq = (fRow1.getStringField(*i) == fRow2.getStringField(*i));
         break;
